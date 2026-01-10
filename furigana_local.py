@@ -32,8 +32,6 @@ def has_kanji(text):
 def split_okurigana(surface, reading):
     """
     分离汉字词汇中的送假名
-    例如：surface="向かえ", reading="むかえ" -> 
-    [{"surface": "向", "furigana": "む"}, {"surface": "か", "furigana": "か"}, {"surface": "え", "furigana": "え"}]
     """
     if not surface or not reading:
         return [{"surface": surface, "furigana": reading}]
@@ -70,7 +68,7 @@ def split_okurigana(surface, reading):
     if root_s:
         res.append({"surface": root_s, "furigana": root_r})
     
-    # 把送假名部分拆成单字 (为了匹配Karaoke音节)
+    # 把送假名部分拆成单字
     for char in suffix:
         res.append({"surface": char, "furigana": char})
         
@@ -82,8 +80,11 @@ def get_furigana(text):
         if not FUGASHI_AVAILABLE:
             return json.dumps({"error": "fugashi not installed"}, ensure_ascii=False)
         
-        if not text or text.strip() == "":
-            return json.dumps([], ensure_ascii=False)
+        # 不要在这里 strip()，否则会丢失行首行尾的空格，导致卡拉OK对应不上
+        if text is None:
+             return json.dumps([], ensure_ascii=False)
+        if text == "":
+             return json.dumps([], ensure_ascii=False)
         
         tagger = fugashi.Tagger()
         result = []
@@ -91,8 +92,9 @@ def get_furigana(text):
         for word in tagger(text):
             surface = word.surface
             
-            # 跳过空白
-            if not surface or surface.strip() == "":
+            # 【重要修改】不要跳过空白！Aegisub 的音节里包含空格，必须保留以保持对齐。
+            # fugashi 通常会把空格作为一个单独的 token 返回
+            if not surface:
                 continue
             
             # 判断是否需要注音
@@ -102,7 +104,7 @@ def get_furigana(text):
                 split_results = split_okurigana(surface, furigana)
                 result.extend(split_results)
             else:
-                # 假名、英文、符号等直接使用原文
+                # 假名、英文、符号、空格等直接使用原文
                 furigana = surface
                 result.append({
                     "surface": surface,
@@ -126,13 +128,12 @@ if __name__ == "__main__":
         
         # 支持两种模式：命令行参数 或 临时文件
         if len(sys.argv) > 1:
-            # 检查是否是文件路径
             if sys.argv[1].startswith("--file="):
-                file_path = sys.argv[1][7:]  # 去掉 "--file=" 前缀
+                file_path = sys.argv[1][7:]
                 if os.path.exists(file_path):
                     with open(file_path, 'r', encoding='utf-8') as f:
-                        text = f.read().strip()
-                    # 处理完后删除临时文件
+                        # 不要 strip() 整个文件内容，防止丢失首尾空格
+                        text = f.read()
                     try:
                         os.remove(file_path)
                     except:
