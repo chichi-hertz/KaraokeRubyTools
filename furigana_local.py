@@ -29,6 +29,53 @@ def has_kanji(text):
         return False
     return any('\u4e00' <= c <= '\u9fff' for c in text)
 
+def split_okurigana(surface, reading):
+    """
+    分离汉字词汇中的送假名
+    例如：surface="向かえ", reading="むかえ" -> 
+    [{"surface": "向", "furigana": "む"}, {"surface": "か", "furigana": "か"}, {"surface": "え", "furigana": "え"}]
+    """
+    if not surface or not reading:
+        return [{"surface": surface, "furigana": reading}]
+    
+    if surface == reading:
+        return [{"surface": surface, "furigana": reading}]
+
+    # 从末尾开始匹配相同的字符（送假名）
+    s_len = len(surface)
+    r_len = len(reading)
+    match_count = 0
+    
+    while match_count < s_len and match_count < r_len:
+        s_char = surface[s_len - 1 - match_count]
+        r_char = reading[r_len - 1 - match_count]
+        
+        if s_char == r_char:
+            match_count += 1
+        else:
+            break
+    
+    # 如果没有匹配的后缀，直接返回原词
+    if match_count == 0:
+         return [{"surface": surface, "furigana": reading}]
+         
+    # 切分根词和送假名
+    root_s = surface[:s_len - match_count]
+    root_r = reading[:r_len - match_count]
+    
+    suffix = surface[s_len - match_count:]
+    
+    res = []
+    # 添加汉字部分
+    if root_s:
+        res.append({"surface": root_s, "furigana": root_r})
+    
+    # 把送假名部分拆成单字 (为了匹配Karaoke音节)
+    for char in suffix:
+        res.append({"surface": char, "furigana": char})
+        
+    return res
+
 def get_furigana(text):
     """获取日语文本的假名注音"""
     try:
@@ -51,14 +98,16 @@ def get_furigana(text):
             # 判断是否需要注音
             if has_kanji(surface) and word.feature.kana:
                 furigana = kata_to_hira(word.feature.kana)
+                # 使用送假名分离逻辑
+                split_results = split_okurigana(surface, furigana)
+                result.extend(split_results)
             else:
                 # 假名、英文、符号等直接使用原文
                 furigana = surface
-            
-            result.append({
-                "surface": surface,
-                "furigana": furigana
-            })
+                result.append({
+                    "surface": surface,
+                    "furigana": furigana
+                })
         
         return json.dumps(result, ensure_ascii=False)
         
