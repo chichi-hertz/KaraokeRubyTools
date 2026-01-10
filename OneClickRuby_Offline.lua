@@ -1,20 +1,13 @@
-script_name = "One Click Ruby V3"
-script_description = "Get the formatted lyrics with furigana using local Python + fugashi"
+script_name = "One Click Ruby V3 (Tag Only)"
+script_description = "Add furigana tags (##Kanji|<Kana##) using local Python + fugashi"
 script_author = "domo (modified for fugashi)"
 ruby_part_from = "Kage Maboroshi&KiNen"
-script_version = "3.0"
+script_version = "3.2-SpaceFix"
 
 require "karaskel"
 local ffi = require"ffi"
 local utf8 = require"utf8"
 local json = require"json"
-
-meta = nil
-styles = nil
-
---Typesetting Parameters--
-rubypadding = 0 --extra spacing of ruby chars
-rubyscale = 0.5 --scale of ruby chars 
 
 --Separators--
 char_s = "##"  -- s(tart) of ruby part
@@ -23,16 +16,12 @@ char_e = "##"  -- e(nd) of ruby part
 
 -- 配置：Python脚本路径
 local PYTHON_SCRIPT_PATH = "C:\\Program Files\\Aegisub\\automation\\autoload\\furigana_local.py"
+local PYTHON_EXE = "python"  -- 根据需要修改
 
--- 如果需要指定Python路径，修改这里
-local PYTHON_EXE = "python"  -- 或者 "python3" 或完整路径 "C:\\Python39\\python.exe"
-
-
+-- 工具函数
 local function deleteEmpty(tbl)
 	for i=#tbl,1,-1 do
-		if tbl[i] == "" then
-			table.remove(tbl, i)
-		end
+		if tbl[i] == "" then table.remove(tbl, i) end
 	end
 	return tbl
 end
@@ -45,12 +34,12 @@ end
 function Split(szFullString, szSeparator)
 	local nFindStartIndex = 1
 	local nSplitIndex = 1
-	local nSplitArray = {}   
+	local nSplitArray = {} 
 	while true do
-		local nFindLastIndex = string.find(szFullString, szSeparator, nFindStartIndex)      
+		local nFindLastIndex = string.find(szFullString, szSeparator, nFindStartIndex)   
 		if not nFindLastIndex then
 			nSplitArray[nSplitIndex] = string.sub(szFullString, nFindStartIndex, string.len(szFullString))
-			break      
+			break   
 		end
 		nSplitArray[nSplitIndex] = string.sub(szFullString, nFindStartIndex, nFindLastIndex - 1)
 		nFindStartIndex = nFindLastIndex + string.len(szSeparator)
@@ -83,101 +72,36 @@ function addK0BeforeText(s)
 end
 
 local function escapeLuaPattern(str)
-	-- Escape special characters for Lua patterns
 	return str:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
 end
 
-local function escapeShellArg(str)
-	-- Windows shell escaping
-	-- Replace " with ""  and wrap in quotes
-	str = str:gsub('"', '""')
-	return '"' .. str .. '"'
-end
-
 local function send2PythonLocal(sentence)
-	if not sentence or sentence == "" then
-		aegisub.debug.out("WARNING: Empty sentence sent to Python\n")
-		return json.encode({})
-	end
-	
-	-- 移除可能导致问题的特殊字符
+	if not sentence or sentence == "" then return json.encode({}) end
 	sentence = sentence:gsub("\r", ""):gsub("\n", "")
-	
-	-- 使用临时文件传递文本，避免命令行转义问题
 	local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
 	local temp_file = temp_dir .. "\\aegisub_ruby_" .. os.time() .. "_" .. math.random(10000) .. ".txt"
-	
-	-- 写入临时文件
 	local f = io.open(temp_file, "w")
-	if not f then
-		aegisub.debug.out("ERROR: Cannot create temp file: " .. temp_file .. "\n")
-		return json.encode({})
-	end
+	if not f then return json.encode({}) end
 	f:write(sentence)
 	f:close()
 	
-	-- 构建命令
 	local cmd = string.format('%s "%s" --file=%s', PYTHON_EXE, PYTHON_SCRIPT_PATH, temp_file)
-	
-	aegisub.debug.out("DEBUG: Running command for text: " .. sentence .. "\n")
-	
 	local handle = io.popen(cmd, 'r')
-	if not handle then 
-		aegisub.debug.out("ERROR: Failed to execute Python script\n")
-		-- 清理临时文件
-		os.remove(temp_file)
-		return json.encode({})
-	end
-	
+	if not handle then os.remove(temp_file); return json.encode({}) end
 	local result = handle:read("*a")
-	local close_success = handle:close()
-	
-	-- 清理临时文件（如果Python没有删除）
+	handle:close()
 	pcall(os.remove, temp_file)
 	
-	if not result or result == "" then
-		aegisub.debug.out("ERROR: Empty response from Python\n")
-		return json.encode({})
-	end
-	
-	-- 清理输出
-	result = result:gsub("^%s*", ""):gsub("%s*$", "")
-	
-	aegisub.debug.out("DEBUG: Python Output: " .. result .. "\n")
-	
-	return result
+	if not result or result == "" then return json.encode({}) end
+	return result:gsub("^%s*", ""):gsub("%s*$", "")
 end
 
-
 local function json2LineText(jsonStr, lineNum)
-	if not jsonStr or jsonStr == "" or jsonStr == "[]" then
-		aegisub.debug.out("WARNING: Empty JSON for line " .. lineNum .. "\n")
-		return ""
-	end
-	
+	if not jsonStr or jsonStr == "" or jsonStr == "[]" then return "" end
 	local success, decoded = pcall(json.decode, jsonStr)
-	
-	if not success then 
-		aegisub.debug.out("ERROR: Failed to decode JSON for line " .. lineNum .. "\n")
-		aegisub.debug.out("JSON was: " .. jsonStr .. "\n")
-		return "" 
-	end
-	
-	if not decoded then 
-		aegisub.debug.out("ERROR: Decoded result is nil for line " .. lineNum .. "\n")
-		return "" 
-	end
-	
-	if decoded.error then 
-		aegisub.debug.out("ERROR from Python script: " .. tostring(decoded.error) .. "\n")
-		if decoded.traceback then
-			aegisub.debug.out("Traceback: " .. tostring(decoded.traceback) .. "\n")
-		end
-		return "" 
-	end
+	if not success or not decoded or decoded.error then return "" end
 	
 	local lineText = ""
-	
 	for i=1, #decoded do
 		local item = decoded[i]
 		if item.surface then
@@ -188,14 +112,15 @@ local function json2LineText(jsonStr, lineNum)
 			end
 		end
 	end
-	
 	return lineText
 end
 
+-- !!! 重点修复的函数 !!!
 local function KaraText(newText, lineKara)
-	rubyTbl = deleteEmpty(Split(newText, char_s))
-	newRubyTbl = {}
+	local rubyTbl = deleteEmpty(Split(newText, char_s))
+	local newRubyTbl = {}
 	
+	-- 拆分注音块和普通字符
 	for i=1, #rubyTbl do
 		if string.find(rubyTbl[i], escapeLuaPattern(char_m)) then
 			newRubyTbl[#newRubyTbl+1] = rubyTbl[i]
@@ -206,10 +131,11 @@ local function KaraText(newText, lineKara)
 		end
 	end
 	
-	sylNum = #lineKara
+	-- 倒序合并逻辑（修复时间轴对应多个字符的情况）
+	local sylNum = #lineKara
 	for i=#newRubyTbl, 2, -1 do
-		realWord = string.match(newRubyTbl[i], "([^|<]+)[<|]?")
-		if realWord and utf8.len(realWord) < utf8.len(lineKara[sylNum].sylText) then
+		local realWord = string.match(newRubyTbl[i], "([^|<]+)[<|]?")
+		if sylNum > 0 and realWord and utf8.len(realWord) < utf8.len(lineKara[sylNum].sylText) then
 			newRubyTbl[i-1] = newRubyTbl[i-1] .. newRubyTbl[i]
 			table.remove(newRubyTbl, i)
 		else
@@ -217,97 +143,58 @@ local function KaraText(newText, lineKara)
 		end
 	end
 	
-	tmpSylText = ""
-	tmpSylKDur = 0
-	i = 1
-	newKaraText = ""
+	local tmpSylText = ""
+	local tmpSylKDur = 0
+	local newKaraText = ""
 	
-	while i <= #lineKara do
-		tmpSylText = tmpSylText .. lineKara[i].sylText
-		tmpSylKDur = tmpSylKDur + lineKara[i].kDur
-		table.remove(lineKara, 1)
-		realWord = string.match(newRubyTbl[i], "([^|<]+)[<|]?")
+	-- 主循环：同时遍历Kara和文本
+	while #lineKara > 0 or tmpSylText ~= "" do
+		-- 如果还有Kara音节，取出一个累加
+		if #lineKara > 0 then
+			tmpSylText = tmpSylText .. lineKara[1].sylText
+			tmpSylKDur = tmpSylKDur + lineKara[1].kDur
+			table.remove(lineKara, 1)
+		end
 		
-		if tmpSylText == realWord then
-			newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, newRubyTbl[i])
-			table.remove(newRubyTbl, i)
+		-- 如果注音表还有内容，尝试匹配
+		if #newRubyTbl > 0 then
+			local currentRubyItem = newRubyTbl[1]
+			local realWord = string.match(currentRubyItem, "([^|<]+)[<|]?")
+			
+			-- 情况1：完全匹配
+			if tmpSylText == realWord then
+				newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, currentRubyItem)
+				table.remove(newRubyTbl, 1)
+				tmpSylText = ""
+				tmpSylKDur = 0
+				
+			-- 情况2 [修复关键]：Kara是空格，但注音表当前词不是空格（说明Python把空格吞了）
+			-- 此时我们输出空格，但不消耗注音表里的词
+			elseif tmpSylText:match("^%s+$") and not (realWord and realWord:match("^%s+$")) then
+				newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, tmpSylText)
+				tmpSylText = ""
+				tmpSylKDur = 0
+			end
+		else
+			-- 情况3：注音表空了，把剩下的Kara文本全吐出来
+			if tmpSylText ~= "" then
+				newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, tmpSylText)
+				tmpSylText = ""
+				tmpSylKDur = 0
+			end
+		end
+		
+		-- 防死循环：如果Kara空了但tmp不为空且匹配不上，强制输出（兜底）
+		if #lineKara == 0 and tmpSylText ~= "" and #newRubyTbl > 0 and tmpSylText ~= string.match(newRubyTbl[1], "([^|<]+)[<|]?") then
+			newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, tmpSylText)
 			tmpSylText = ""
-			tmpSylKDur = 0
 		end
 	end
 	
 	return newKaraText
 end
 
-local function parse_templates(meta, styles, subs)
-	local i = 1
-	while i <= #subs do
-		aegisub.progress.set((i-1) / #subs * 100)
-		local l = subs[i]
-		i = i + 1
-		if l.class == "dialogue" and l.effect == "furi-fx" then
-			i = i - 1
-			subs.delete(i)
-		end
-	end
-	aegisub.progress.set(100)
-end
-
-local function processline(subs, line, li)
-	line.comment = false
-	local originline = table.copy(line)
-	
-	local ktag = "{\\k0}"
-	local stylefs = styles[line.style].fontsize
-	local rubbyfs = stylefs * rubyscale
-	
-	if string.find(line.text, escapeLuaPattern(char_s) .. "(.-)" .. escapeLuaPattern(char_m) .. "(.-)" .. escapeLuaPattern(char_e)) ~= nil then
-		if (char_s == "(" and char_m == "," and char_e == ")") then
-			line.text = string.gsub(line.text, "%((.-),(.-)%)", ktag.."%1".."|".."%2"..ktag)
-		elseif (char_s == "" and char_m == "(" and char_e == ")") then
-			line.text = string.gsub(line.text, "(^[ぁ-ゖ]+)%(([ぁ-ゖ]+)%)^[ぁ-ゖ]+", ktag.."%1".."|".."%2"..ktag)
-		else
-			line.text = string.gsub(line.text, escapeLuaPattern(char_s) .. "(.-)" .. escapeLuaPattern(char_m) .. "(.-)" .. escapeLuaPattern(char_e), ktag.."%1".."|".."%2"..ktag)
-		end
-	
-		local vl = table.copy(line)
-		karaskel.preproc_line(subs, meta, styles, vl)
-	
-		if (char_s == "(" and char_m == "," and char_e == ")") then
-			originline.text = string.gsub(originline.text, "%((.-),(.-)%)", "%1")
-		elseif (char_s == "" and char_m == "(" and char_e == ")") then
-			originline.text = string.gsub(originline.text, "(^[ぁ-ゖ]+)%(([ぁ-ゖ]+)%)", "%1")
-		else
-			originline.text = string.gsub(originline.text, escapeLuaPattern(char_s) .. "(.-)" .. escapeLuaPattern(char_m) .. "(.-)" .. escapeLuaPattern(char_e), "%1")
-		end
-	
-		originline.text = string.format("{\\pos(%d,%d)}", vl.x, vl.y) .. originline.text
-		originline.effect = "furi-fx"
-		subs.append(originline)
-
-		for i = 1, vl.furi.n do
-			local fl = table.copy(line)
-			local rlx = vl.left + vl.kara[vl.furi[i].i].center
-			local rly = vl.top - rubbyfs/2 - rubypadding
-			fl.text = string.format("{\\an5\\fs%d\\pos(%d,%d)}%s", rubbyfs, rlx, rly, vl.furi[i].text)
-			fl.effect = "furi-fx"
-			subs.append(fl)
-		end
-	else
-		subs.append(originline)
-	end
-end
-
-local function Ruby(subs, sel)
-	meta, styles = karaskel.collect_head(subs)
-	for i=1, #sel do
-		processline(subs, sel[i], i)
-	end
-	aegisub.set_undo_point(script_name) 
-end
-
 function oneClickRuby(subtitles, selected_lines)
-	-- 查找对话开始位置
 	local dialogue_start = 1
 	for i=1, #subtitles do
 		if subtitles[i].class == "dialogue" then
@@ -316,159 +203,75 @@ function oneClickRuby(subtitles, selected_lines)
 		end
 	end
 	
-	-- 收集样式信息
 	meta, styles = karaskel.collect_head(subtitles)
-	
-	newLineTbl = {}
 	local total_lines = #selected_lines
-	
-	aegisub.debug.out("=== Starting Ruby Processing ===\n")
-	aegisub.debug.out("Total lines to process: " .. total_lines .. "\n\n")
 	
 	for i=1, total_lines do
 		local lineNum = tostring(selected_lines[i] - dialogue_start)
 		local l = subtitles[selected_lines[i]]
-		
-		if not l then
-			aegisub.debug.out("ERROR: Line " .. lineNum .. " is nil, skipping\n")
-			goto continue
-		end
+		if not l then goto continue end
 		
 		local orgText = l.text or ""
+		local text = orgText:gsub("{[^}]+}", "") -- 纯文本
 		
-		aegisub.debug.out("--- Processing Line " .. lineNum .. " (" .. i .. "/" .. total_lines .. ") ---\n")
-		
-		-- 注释原始行
-		l.comment = true
-		subtitles[selected_lines[i]] = l
-		
-		-- 移除所有标签以获取纯文本
-		local text = orgText:gsub("{[^}]+}", "")
-		
-		-- 跳过空行
-		if text == "" or text:match("^%s*$") then
-			aegisub.debug.out("Line " .. lineNum .. " is empty, skipping\n\n")
-			goto continue
-		end
+		if text == "" or text:match("^%s*$") then goto continue end
 		
 		local newText = ""
 		
-		-- 检查是否是卡拉OK行
+		-- 1. 卡拉OK行处理
 		if string.find(orgText, "{\\[kK]%d+}") then
-			aegisub.debug.out("Processing line " .. lineNum .. " as KARAOKE line.\n")
+			aegisub.debug.out("Processing Karaoke Line: " .. lineNum .. "\n")
 			
-			orgText = addK0BeforeText(l.text)
-			if orgText ~= l.text then 
-				aegisub.debug.out("[WARNING] {\\k0} was generated for syllable with multiple characters.\n")
-			end
-			
+			local tempOrgText = addK0BeforeText(l.text)
 			lineKara = {}
-			for kDur, sylText in string.gmatch(orgText, "{\\[kK](%d+)}([^{]+)") do
+			for kDur, sylText in string.gmatch(tempOrgText, "{\\[kK](%d+)}([^{]+)") do
 				lineKara[#lineKara+1] = {sylText=sylText, kDur=kDur}
 			end
 			
-			aegisub.progress.task("Requesting for line: " .. lineNum)
-			
-			-- 调用Python处理
 			local success, result = pcall(send2PythonLocal, text)
-			
-			if not success then
-				aegisub.debug.out("ERROR calling Python for line " .. lineNum .. ": " .. tostring(result) .. "\n")
-				newText = orgText
-			else
-				aegisub.progress.task("Parsing for line: " .. lineNum)
-				
+			if success then
 				local parsed_success, parsed_text = pcall(json2LineText, result, lineNum)
-				
-				if not parsed_success then
-					aegisub.debug.out("ERROR parsing JSON for line " .. lineNum .. ": " .. tostring(parsed_text) .. "\n")
-					newText = orgText
-				elseif type(parsed_text) == "string" and parsed_text ~= "" then
+				if parsed_success and parsed_text ~= "" then
 					local kara_success, kara_text = pcall(KaraText, parsed_text, lineKara)
-					if not kara_success then
-						aegisub.debug.out("ERROR in KaraText for line " .. lineNum .. ": " .. tostring(kara_text) .. "\n")
-						newText = orgText
-					else
+					if kara_success then
 						newText = kara_text
+					else
+						newText = orgText
 					end
 				else
-					aegisub.debug.out("WARNING: Empty result for line " .. lineNum .. ", using original\n")
 					newText = orgText
 				end
-			end
-			
-			l.effect = "karaoke"
-			
-		-- 检查是否已经有注音标记
-		elseif string.find(text, escapeLuaPattern(char_m)) then
-			aegisub.debug.out("Line " .. lineNum .. " already has ruby marks, using as-is.\n")
-			newText = text
-			l.effect = "ruby"
-			
-		-- 普通行，调用Python获取注音
-		else
-			aegisub.debug.out("Processing line " .. lineNum .. " as NORMAL line.\n")
-			
-			aegisub.progress.task("Requesting for line: " .. lineNum)
-			
-			local success, result = pcall(send2PythonLocal, text)
-			
-			if not success then
-				aegisub.debug.out("ERROR calling Python for line " .. lineNum .. ": " .. tostring(result) .. "\n")
-				newText = orgText
 			else
-				aegisub.progress.task("Parsing for line: " .. lineNum)
-				
+				newText = orgText
+			end
+
+		-- 2. 已经有注音的行
+		elseif string.find(text, escapeLuaPattern(char_m)) then
+			newText = text
+
+		-- 3. 普通行处理
+		else
+			local success, result = pcall(send2PythonLocal, text)
+			if success then
 				local parsed_success, parsed_text = pcall(json2LineText, result, lineNum)
-				
-				if not parsed_success then
-					aegisub.debug.out("ERROR parsing JSON for line " .. lineNum .. ": " .. tostring(parsed_text) .. "\n")
-					newText = orgText
-				elseif type(parsed_text) == "string" and parsed_text ~= "" then
+				if parsed_success and parsed_text ~= "" then
 					newText = parsed_text
 				else
-					aegisub.debug.out("WARNING: Empty result for line " .. lineNum .. ", using original\n")
 					newText = orgText
 				end
+			else
+				newText = orgText
 			end
-			
-			l.effect = "ruby"
 		end
 		
-		-- 写入结果
-		aegisub.progress.task("Writing for line: " .. lineNum)
-		
-		if newText ~= "" then
+		if newText ~= "" and newText ~= orgText then
 			l.text = newText
-		else
-			l.text = orgText
+			subtitles[selected_lines[i]] = l
 		end
-		
-		l.comment = false
-		newLineTbl[#newLineTbl+1] = l
-		
-		aegisub.debug.out("Line " .. lineNum .. " completed successfully.\n")
-		aegisub.debug.out("Result: " .. l.text .. "\n\n")
-		
-		-- 更新进度
 		aegisub.progress.set(i / total_lines * 100)
-		
 		::continue::
 	end
-	
-	aegisub.debug.out("=== Applying Ruby formatting ===\n")
-	
-	-- 应用Ruby格式
-	local ruby_success, ruby_error = pcall(Ruby, subtitles, newLineTbl)
-	
-	if not ruby_success then
-		aegisub.debug.out("ERROR in Ruby formatting: " .. tostring(ruby_error) .. "\n")
-		aegisub.debug.out("Lines were processed but not formatted.\n")
-	end
-	
-	aegisub.debug.out("=== All Done! ===\n")
 	aegisub.set_undo_point(script_name)
 end
 
 aegisub.register_macro(script_name, script_description, oneClickRuby)
-
