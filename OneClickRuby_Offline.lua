@@ -2,7 +2,7 @@ script_name = "一键为日语汉字注音(##汉字|<假名##)"
 script_description = "使用本地 Python + fugashi 添加假名注音标签 (##汉字|<假名##)"
 script_author = "domo (modified for fugashi)"
 ruby_part_from = "Kage Maboroshi&KiNen"
-script_version = "3.2-SpaceFix"
+script_version = "3.3-KF-Support"
 
 require "karaskel"
 local ffi = require "ffi"
@@ -117,7 +117,7 @@ local function json2LineText(jsonStr, lineNum)
 	return lineText
 end
 
--- !!! 重点修复的函数 !!!
+-- !!! 重点修复的函数 - 添加 kf 支持 !!!
 local function KaraText(newText, lineKara)
 	local rubyTbl = deleteEmpty(Split(newText, char_s))
 	local newRubyTbl = {}
@@ -147,6 +147,7 @@ local function KaraText(newText, lineKara)
 
 	local tmpSylText = ""
 	local tmpSylKDur = 0
+	local tmpKType = "k"  -- 记录当前累积的k标签类型
 	local newKaraText = ""
 
 	-- 主循环：同时遍历Kara和文本
@@ -155,6 +156,7 @@ local function KaraText(newText, lineKara)
 		if #lineKara > 0 then
 			tmpSylText = tmpSylText .. lineKara[1].sylText
 			tmpSylKDur = tmpSylKDur + lineKara[1].kDur
+			tmpKType = lineKara[1].kType  -- 更新k标签类型
 			table.remove(lineKara, 1)
 		end
 
@@ -165,30 +167,33 @@ local function KaraText(newText, lineKara)
 
 			-- 情况1：完全匹配
 			if tmpSylText == realWord then
-				newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, currentRubyItem)
+				newKaraText = newKaraText .. string.format("{\\%s%d}%s", tmpKType, tmpSylKDur, currentRubyItem)
 				table.remove(newRubyTbl, 1)
 				tmpSylText = ""
 				tmpSylKDur = 0
+				tmpKType = "k"
 
 				-- 情况2 [修复关键]：Kara是空格，但注音表当前词不是空格（说明Python把空格吞了）
 				-- 此时我们输出空格，但不消耗注音表里的词
 			elseif tmpSylText:match("^%s+$") and not (realWord and realWord:match("^%s+$")) then
-				newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, tmpSylText)
+				newKaraText = newKaraText .. string.format("{\\%s%d}%s", tmpKType, tmpSylKDur, tmpSylText)
 				tmpSylText = ""
 				tmpSylKDur = 0
+				tmpKType = "k"
 			end
 		else
 			-- 情况3：注音表空了，把剩下的Kara文本全吐出来
 			if tmpSylText ~= "" then
-				newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, tmpSylText)
+				newKaraText = newKaraText .. string.format("{\\%s%d}%s", tmpKType, tmpSylKDur, tmpSylText)
 				tmpSylText = ""
 				tmpSylKDur = 0
+				tmpKType = "k"
 			end
 		end
 
 		-- 防死循环：如果Kara空了但tmp不为空且匹配不上，强制输出（兜底）
 		if #lineKara == 0 and tmpSylText ~= "" and #newRubyTbl > 0 and tmpSylText ~= string.match(newRubyTbl[1], "([^|<]+)[<|]?") then
-			newKaraText = newKaraText .. string.format("{\\k%d}%s", tmpSylKDur, tmpSylText)
+			newKaraText = newKaraText .. string.format("{\\%s%d}%s", tmpKType, tmpSylKDur, tmpSylText)
 			tmpSylText = ""
 		end
 	end
@@ -220,14 +225,15 @@ function oneClickRuby(subtitles, selected_lines)
 
 		local newText = ""
 
-		-- 1. 卡拉OK行处理
-		if string.find(orgText, "{\\[kK]%d+}") then
+		-- 1. 卡拉OK行处理 (支持 \k, \K, \kf, \ko 等所有变体)
+		if string.find(orgText, "{\\[kK][foO]?%d+}") then
 			aegisub.debug.out("Processing Karaoke Line: " .. lineNum .. "\n")
 
 			local tempOrgText = addK0BeforeText(l.text)
 			lineKara = {}
-			for kDur, sylText in string.gmatch(tempOrgText, "{\\[kK](%d+)}([^{]+)") do
-				lineKara[#lineKara + 1] = { sylText = sylText, kDur = kDur }
+			-- 修改正则以捕获k标签类型（k, K, kf, ko等）
+			for kType, kDur, sylText in string.gmatch(tempOrgText, "{\\([kK][foO]?)(%d+)}([^{]+)") do
+				lineKara[#lineKara + 1] = { sylText = sylText, kDur = kDur, kType = kType }
 			end
 
 			local success, result = pcall(send2PythonLocal, text)
