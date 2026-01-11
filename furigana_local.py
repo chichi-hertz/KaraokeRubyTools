@@ -78,13 +78,10 @@ def get_furigana(text):
     """获取日语文本的假名注音"""
     try:
         if not FUGASHI_AVAILABLE:
-            return json.dumps({"error": "fugashi not installed"}, ensure_ascii=False)
+            return {"error": "fugashi not installed"}
         
-        # 不要在这里 strip()，否则会丢失行首行尾的空格，导致卡拉OK对应不上
-        if text is None:
-             return json.dumps([], ensure_ascii=False)
-        if text == "":
-             return json.dumps([], ensure_ascii=False)
+        if text is None or text == "":
+             return []
         
         tagger = fugashi.Tagger()
         result = []
@@ -92,8 +89,6 @@ def get_furigana(text):
         for word in tagger(text):
             surface = word.surface
             
-            # 【重要修改】不要跳过空白！Aegisub 的音节里包含空格，必须保留以保持对齐。
-            # fugashi 通常会把空格作为一个单独的 token 返回
             if not surface:
                 continue
             
@@ -111,14 +106,21 @@ def get_furigana(text):
                     "furigana": furigana
                 })
         
-        return json.dumps(result, ensure_ascii=False)
+        return result
         
     except Exception as e:
-        error_msg = {
+        return {
             "error": str(e),
             "traceback": traceback.format_exc()
         }
-        return json.dumps(error_msg, ensure_ascii=False)
+
+def process_batch(texts):
+    """批量处理多行文本"""
+    results = []
+    for text in texts:
+        result = get_furigana(text)
+        results.append(result)
+    return results
 
 if __name__ == "__main__":
     try:
@@ -126,24 +128,47 @@ if __name__ == "__main__":
         if sys.version_info[0] >= 3:
             sys.stdout.reconfigure(encoding='utf-8')
         
+        # 检查是否为批量模式
+        is_batch = "--batch" in sys.argv
+        
         # 支持两种模式：命令行参数 或 临时文件
         if len(sys.argv) > 1:
-            if sys.argv[1].startswith("--file="):
-                file_path = sys.argv[1][7:]
-                if os.path.exists(file_path):
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        # 不要 strip() 整个文件内容，防止丢失首尾空格
-                        text = f.read()
-                    try:
-                        os.remove(file_path)
-                    except:
-                        pass
-                else:
-                    text = ""
-            else:
-                text = sys.argv[1]
+            file_path = None
+            text = None
             
-            output = get_furigana(text)
+            # 查找文件参数
+            for arg in sys.argv[1:]:
+                if arg.startswith("--file="):
+                    file_path = arg[7:]
+                    break
+            
+            if file_path and os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+                
+                if is_batch:
+                    # 批量模式：解析JSON数组
+                    try:
+                        texts = json.loads(content)
+                        results = process_batch(texts)
+                        output = json.dumps(results, ensure_ascii=False)
+                    except json.JSONDecodeError:
+                        output = json.dumps({"error": "Invalid JSON input"}, ensure_ascii=False)
+                else:
+                    # 单行模式
+                    result = get_furigana(content)
+                    output = json.dumps(result, ensure_ascii=False)
+            else:
+                # 从命令行参数直接读取（单行模式）
+                text = sys.argv[1] if not sys.argv[1].startswith("--") else ""
+                result = get_furigana(text)
+                output = json.dumps(result, ensure_ascii=False)
+            
             sys.stdout.write(output)
             sys.stdout.flush()
         else:
@@ -151,7 +176,7 @@ if __name__ == "__main__":
             sys.stdout.flush()
             
     except Exception as e:
-        error_output = json.dumps({"error": str(e)}, ensure_ascii=False)
+        error_output = json.dumps({"error": str(e), "traceback": traceback.format_exc()}, ensure_ascii=False)
         sys.stdout.write(error_output)
         sys.stdout.flush()
     finally:
