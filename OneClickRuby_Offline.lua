@@ -1,5 +1,5 @@
-script_name = "One Click Ruby V3 (Tag Only)"
-script_description = "Add furigana tags (##Kanji|<Kana##) using local Python + fugashi"
+script_name = "一键为日语汉字注音(##汉字|<假名##)"
+script_description = "使用本地 Python + fugashi 添加假名注音标签 (##汉字|<假名##)"
 script_author = "domo (modified for fugashi)"
 ruby_part_from = "Kage Maboroshi&KiNen"
 script_version = "3.2-SpaceFix"

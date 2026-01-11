@@ -1,4 +1,4 @@
-script_name = "智能卡拉OK前处理工具"
+script_name = "自动分配K1/K2样式"
 script_description = "自动分配K1/K2样式并添加保留标签，适配卡拉OK模板"
 script_author = "Gemini"
 script_version = "1.0"
@@ -46,4 +46,4 @@ function convert_k_to_template_ready(subtitles, selected_lines)
 end
 
 -- 注册脚本菜单
-aegisub.register_macro("转换：K轴 -> 注音轴 (K1/K2)", "自动分配样式并添加模板标记", convert_k_to_template_ready)
+aegisub.register_macro("转换：K轴 -> 注音轴", "自动分配样式并添加模板标记", convert_k_to_template_ready)
