@@ -6,15 +6,15 @@ script_version = "1.0"
 function convert_k_to_template_ready(subtitles, selected_lines)
     -- 这是一个计数器，用于判断奇偶行
     local dialogue_counter = 0
-    
+
     -- 遍历所有字幕行
     for i = 1, #subtitles do
         local line = subtitles[i]
-        
+
         -- 只处理对话行 (class == "dialogue")
         if line.class == "dialogue" then
             dialogue_counter = dialogue_counter + 1
-            
+
             -- 逻辑1：识别并应用样式 K1/K2
             -- 根据你的样本，第1行是K2，第2行是K1。
             -- 数学逻辑：奇数行(1,3,5) -> K2, 偶数行(2,4,6) -> K1
@@ -23,7 +23,7 @@ function convert_k_to_template_ready(subtitles, selected_lines)
             else
                 line.style = "K1"
             end
-            
+
             -- 逻辑2：添加 {\-A} 标签
             -- 检查行首是否已经有 {\-A}，没有则添加
             if not line.text:match("^{\\-A}") then
@@ -35,12 +35,12 @@ function convert_k_to_template_ready(subtitles, selected_lines)
                     line.text = "{\\-A}" .. line.text
                 end
             end
-            
+
             -- 将修改后的行写回字幕对象
             subtitles[i] = line
         end
     end
-    
+
     -- 创建这一步的撤销点
     aegisub.set_undo_point("K轴转注音轴")
 end
