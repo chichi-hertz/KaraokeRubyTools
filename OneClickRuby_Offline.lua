@@ -2,7 +2,7 @@ script_name = "一键为日语汉字注音(##汉字|<假名##)"
 script_description = "使用本地 Python + fugashi 添加假名注音标签 (##汉字|<假名##)"
 script_author = "domo (modified for fugashi)"
 ruby_part_from = "Kage Maboroshi&KiNen"
-script_version = "3.4-Batch"
+script_version = "3.4-Batch-Fixed"
 
 require "karaskel"
 local ffi = require "ffi"
@@ -30,6 +30,46 @@ local function isKatakana(s)
 	if not s or s == "" then return false end
 	return utf8.match(s, "^[\227\130\128-\227\131\191]+$") ~= nil
 end
+-- 【新增】检查字符串是否包含日语字符（平假名、片假名、汉字）
+local function hasJapanese(s)
+	if not s or s == "" then return false end
+	-- 使用字节模式匹配日语字符
+	-- 平假名: \227\129\130 - \227\129\191
+	-- 片假名: \227\130\128 - \227\131\191
+	-- CJK汉字: 大致范围
+	
+	local i = 1
+	while i <= #s do
+		local b = s:byte(i)
+		if b >= 0xE0 and b <= 0xEF then
+			-- 3字节UTF-8字符
+			if i + 2 <= #s then
+				local b1, b2, b3 = s:byte(i, i + 2)
+				-- 平假名 U+3040-U+309F: E3 81 80 - E3 82 9F
+				if b1 == 0xE3 and ((b2 == 0x81 and b3 >= 0x80) or (b2 == 0x82 and b3 <= 0x9F)) then
+					return true
+				end
+				-- 片假名 U+30A0-U+30FF: E3 82 A0 - E3 83 BF
+				if b1 == 0xE3 and ((b2 == 0x82 and b3 >= 0xA0) or (b2 == 0x83 and b3 <= 0xBF)) then
+					return true
+				end
+				-- CJK统一汉字 U+4E00-U+9FFF: E4 B8 80 - E9 BF BF
+				if (b1 >= 0xE4 and b1 <= 0xE9) then
+					return true
+				end
+			end
+			i = i + 3
+		elseif b >= 0xC0 and b <= 0xDF then
+			i = i + 2
+		elseif b >= 0xF0 then
+			i = i + 4
+		else
+			i = i + 1
+		end
+	end
+	return false
+end
+
 
 function Split(szFullString, szSeparator)
 	local nFindStartIndex = 1
@@ -47,13 +87,14 @@ function Split(szFullString, szSeparator)
 	end
 	return nSplitArray
 end
-
+-- 【修改】只为日语部分添加k0标签
 function addK0BeforeText(s)
 	local result = ""
 	local i = 1
 	while i <= utf8.len(s) do
 		local charC = utf8.sub(s, i, i)
 		if charC == "{" then
+			-- 保留原有的标签
 			local j = i
 			while utf8.sub(s, j, j) ~= "}" and j <= utf8.len(s) do
 				j = j + 1
@@ -61,8 +102,30 @@ function addK0BeforeText(s)
 			result = result .. utf8.sub(s, i, j)
 			i = j + 1
 		else
-			if i == 1 or utf8.sub(s, i - 1, i - 1) ~= "}" then
-				result = result .. "{\\k0}"
+			-- 检查当前字符是否为日语字符
+			local isJapaneseChar = false
+			local byteStr = charC
+			if #byteStr == 3 then
+				local b1, b2, b3 = byteStr:byte(1, 3)
+				-- 平假名 U+3040-U+309F: E3 81 80 - E3 82 9F
+				if b1 == 0xE3 and ((b2 == 0x81 and b3 >= 0x80) or (b2 == 0x82 and b3 <= 0x9F)) then
+					isJapaneseChar = true
+				end
+				-- 片假名 U+30A0-U+30FF: E3 82 A0 - E3 83 BF
+				if b1 == 0xE3 and ((b2 == 0x82 and b3 >= 0xA0) or (b2 == 0x83 and b3 <= 0xBF)) then
+					isJapaneseChar = true
+				end
+				-- CJK统一汉字 U+4E00-U+9FFF: E4 B8 80 - E9 BF BF
+				if (b1 >= 0xE4 and b1 <= 0xE9) then
+					isJapaneseChar = true
+				end
+			end
+			
+			if isJapaneseChar then
+				-- 只为日语字符添加k0标签
+				if i == 1 or utf8.sub(s, i - 1, i - 1) ~= "}" then
+					result = result .. "{\\k0}"
+				end
 			end
 			result = result .. charC
 			i = i + 1
@@ -71,11 +134,12 @@ function addK0BeforeText(s)
 	return result
 end
 
+
 local function escapeLuaPattern(str)
 	return str:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
 end
 
--- 【新增】批量发送所有文本到Python
+-- 【批量发送所有文本到Python】
 local function send2PythonBatch(texts)
 	if not texts or #texts == 0 then return {} end
 	
@@ -215,7 +279,7 @@ function oneClickRuby(subtitles, selected_lines)
 	meta, styles = karaskel.collect_head(subtitles)
 	local total_lines = #selected_lines
 
-	-- 【关键修改】收集所有需要处理的文本
+	-- 【关键修改】收集所有需要处理的文本，跳过纯英文行
 	local texts_to_process = {}
 	local line_info = {}
 	
@@ -225,7 +289,8 @@ function oneClickRuby(subtitles, selected_lines)
 			local orgText = l.text or ""
 			local text = orgText:gsub("{[^}]+}", "")
 			
-			if text ~= "" and not text:match("^%s*$") and not string.find(text, escapeLuaPattern(char_m)) then
+			-- 【修改】只处理包含日语的行
+			if text ~= "" and not text:match("^%s*$") and not string.find(text, escapeLuaPattern(char_m)) and hasJapanese(text) then
 				texts_to_process[#texts_to_process + 1] = text
 				line_info[#line_info + 1] = {
 					index = i,
@@ -236,6 +301,12 @@ function oneClickRuby(subtitles, selected_lines)
 				}
 			end
 		end
+	end
+	
+	-- 如果没有需要处理的行，直接返回
+	if #texts_to_process == 0 then
+		aegisub.debug.out("没有找到包含日语的行需要处理\n")
+		return
 	end
 	
 	-- 【批量调用Python】
